@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -95,6 +96,23 @@ class HomeAssistantConfig:
     url: str
     token: str
     entities: HomeAssistantEntities
+    source: str = "unknown"
+
+
+class HomeAssistantError(Exception):
+    pass
+
+
+class HomeAssistantAuthError(HomeAssistantError):
+    pass
+
+
+class HomeAssistantConnectivityError(HomeAssistantError):
+    pass
+
+
+class HomeAssistantEntityError(HomeAssistantError):
+    pass
 
 
 REQUIRED_ENTITY_KEYS = (
@@ -159,6 +177,7 @@ def load_homeassistant_config_from_yaml(path: Path) -> HomeAssistantConfig:
         url=url,
         token=token,
         entities=HomeAssistantEntities(**{key: entities[key] for key in REQUIRED_ENTITY_KEYS}),
+        source=f"yaml:{path}",
     )
 
 
@@ -172,6 +191,17 @@ def _read_secret_from_file(path_value: Optional[str]) -> Optional[str]:
         raise ValueError(f"Failed reading secret file {secret_path}: {exc}") from exc
 
 
+def _validate_token(token: Optional[str]) -> Optional[str]:
+    if token is None:
+        return None
+    normalized = token.strip()
+    if not normalized:
+        return None
+    if normalized == "YOUR_LONG_LIVED_ACCESS_TOKEN":
+        raise ValueError("Home Assistant token is still set to the example placeholder value")
+    return normalized
+
+
 def load_homeassistant_config(path: Path) -> HomeAssistantConfig:
     yaml_config: Optional[HomeAssistantConfig] = None
     if path.exists():
@@ -179,14 +209,19 @@ def load_homeassistant_config(path: Path) -> HomeAssistantConfig:
     else:
         LOG.info("No YAML config found at %s, relying on environment configuration", path)
 
-    url = os.getenv("HA_URL") or (yaml_config.url if yaml_config else None)
-    token = (
-        os.getenv("HA_TOKEN")
-        or _read_secret_from_file(os.getenv("HA_TOKEN_FILE"))
-        or (yaml_config.token if yaml_config else None)
+    env_url = os.getenv("HA_URL")
+    env_token_raw = os.getenv("HA_TOKEN") or _read_secret_from_file(os.getenv("HA_TOKEN_FILE"))
+    env_entities = {key: os.getenv(env_var) for key, env_var in ENTITY_ENV_VARS.items()}
+    used_env = bool(env_url or env_token_raw or any(env_entities.values()))
+
+    url = env_url or (yaml_config.url if yaml_config else None)
+    env_token = _validate_token(
+        env_token_raw
     )
+    yaml_token = _validate_token(yaml_config.token if yaml_config else None)
+    token = env_token or yaml_token
     entity_values = {
-        key: os.getenv(env_var) or (
+        key: env_entities[key] or (
             getattr(yaml_config.entities, key) if yaml_config else None
         )
         for key, env_var in ENTITY_ENV_VARS.items()
@@ -212,6 +247,7 @@ def load_homeassistant_config(path: Path) -> HomeAssistantConfig:
         url=url,
         token=token,
         entities=HomeAssistantEntities(**entity_values),
+        source="environment+yaml" if yaml_config and used_env else ("environment" if used_env else f"yaml:{path}"),
     )
 
 
@@ -284,29 +320,73 @@ class HomeAssistantClient:
     def __init__(self, base_url: str, token: str, timeout: float = 5.0):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.token_fingerprint = hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
         self.session = requests.Session()
         self.session.headers.update(
             {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
+                "User-Agent": f"smartmeter-faker/{APP_VERSION}",
             }
         )
 
+    def _get(self, path: str) -> requests.Response:
+        url = f"{self.base_url}{path}"
+        try:
+            response = self.session.get(url, timeout=self.timeout)
+        except requests.Timeout as exc:
+            raise HomeAssistantConnectivityError(
+                f"Timed out contacting Home Assistant at {self.base_url}"
+            ) from exc
+        except requests.ConnectionError as exc:
+            raise HomeAssistantConnectivityError(
+                f"Could not connect to Home Assistant at {self.base_url}"
+            ) from exc
+
+        if response.status_code in (401, 403):
+            raise HomeAssistantAuthError(
+                "Home Assistant rejected the access token or the token lacks permission"
+            )
+        if response.status_code == 404:
+            raise HomeAssistantEntityError(f"Home Assistant resource not found: {path}")
+        if response.status_code >= 400:
+            raise HomeAssistantError(
+                f"Home Assistant request failed for {path} with HTTP {response.status_code}"
+            )
+        return response
+
+    def validate_access(self) -> None:
+        response = self._get("/api/")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise HomeAssistantError("Home Assistant access check returned invalid JSON") from exc
+        if payload.get("message") != "API running.":
+            raise HomeAssistantError("Unexpected response from Home Assistant access check")
+
+    def validate_entities(self, entities: HomeAssistantEntities) -> None:
+        for entity_id in entities.__dict__.values():
+            self.get_state(entity_id)
+
     def get_state(self, entity_id: str) -> dict[str, Any]:
-        url = f"{self.base_url}/api/states/{entity_id}"
-        response = self.session.get(url, timeout=self.timeout)
-        response.raise_for_status()
-        return response.json()
+        response = self._get(f"/api/states/{entity_id}")
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise HomeAssistantError(
+                f"Home Assistant returned invalid JSON for entity {entity_id}"
+            ) from exc
 
     def get_float(self, entity_id: str, default: Optional[float] = None) -> Optional[float]:
+        data = self.get_state(entity_id)
+        state = data.get("state")
+        if state in (None, "", "unknown", "unavailable"):
+            LOG.warning("Entity %s returned state=%r; using default=%r", entity_id, state, default)
+            return default
         try:
-            data = self.get_state(entity_id)
-            state = data.get("state")
-            if state in (None, "", "unknown", "unavailable"):
-                return default
             return float(str(state).replace(",", "."))
-        except Exception as exc:
-            LOG.warning("Failed reading %s: %s", entity_id, exc)
+        except ValueError:
+            LOG.warning("Entity %s returned non-numeric state=%r; using default=%r", entity_id, state, default)
             return default
 
 
@@ -496,6 +576,7 @@ def updater_loop(
     frequency_hz: float,
     use_phase_sum_for_total_power: bool,
 ) -> None:
+    consecutive_failures = 0
     while True:
         try:
             update_em420_registers_from_ha(
@@ -505,10 +586,26 @@ def updater_loop(
                 frequency_hz=frequency_hz,
                 use_phase_sum_for_total_power=use_phase_sum_for_total_power,
             )
+            if consecutive_failures:
+                LOG.info("Recovered Home Assistant polling after %s consecutive failures", consecutive_failures)
+            consecutive_failures = 0
             health_state.mark_success()
-        except Exception as exc:
+        except HomeAssistantAuthError as exc:
+            consecutive_failures += 1
             health_state.mark_error(str(exc))
-            LOG.exception("Updater failed: %s", exc)
+            LOG.error(
+                "Home Assistant authorization failed (token fingerprint=%s): %s",
+                ha.token_fingerprint,
+                exc,
+            )
+        except HomeAssistantError as exc:
+            consecutive_failures += 1
+            health_state.mark_error(str(exc))
+            LOG.warning("Home Assistant update failed (%s consecutive failures): %s", consecutive_failures, exc)
+        except Exception as exc:
+            consecutive_failures += 1
+            health_state.mark_error(str(exc))
+            LOG.exception("Updater failed unexpectedly after %s consecutive failures: %s", consecutive_failures, exc)
         time.sleep(interval_s)
 
 
@@ -579,8 +676,12 @@ def main() -> None:
         print(exc, file=sys.stderr)
         sys.exit(1)
 
-    ha_url = args.ha_url or ha_config.url
-    ha_token = args.ha_token or ha_config.token
+    ha_url = (args.ha_url or ha_config.url).strip()
+    try:
+        ha_token = _validate_token(args.ha_token or ha_config.token)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        sys.exit(1)
     if not ha_token:
         print(
             "Missing Home Assistant token. Set it in the YAML config or pass --ha-token / HA_TOKEN.",
@@ -589,6 +690,16 @@ def main() -> None:
         sys.exit(1)
 
     ha = HomeAssistantClient(base_url=ha_url, token=ha_token)
+    try:
+        ha.validate_access()
+        ha.validate_entities(ha_config.entities)
+    except HomeAssistantAuthError as exc:
+        print(f"Home Assistant authorization failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except HomeAssistantError as exc:
+        print(f"Home Assistant validation failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+
     health_state = HealthState(Path(args.health_path), APP_VERSION)
     health_state.mark_starting()
 
@@ -628,6 +739,11 @@ def main() -> None:
         args.host,
         args.port,
         ha_url,
+    )
+    LOG.info(
+        "Home Assistant configuration source=%s token_fingerprint=%s",
+        ha_config.source,
+        ha.token_fingerprint,
     )
     StartTcpServer(context=context, address=(args.host, args.port))
 
