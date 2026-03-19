@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import json
 import logging
 import os
 import signal
@@ -9,6 +10,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+
+APP_VERSION = os.getenv("APP_VERSION", "dev")
+if "--version" in sys.argv:
+    print(f"{Path(sys.argv[0]).name} {APP_VERSION}")
+    raise SystemExit(0)
 
 import requests
 from pymodbus.datastore import (
@@ -28,6 +34,47 @@ LOG = logging.getLogger("ha_em420")
 
 
 DEFAULT_CONFIG_PATH = Path("homeassistant.yaml")
+DEFAULT_HEALTH_PATH = Path(os.getenv("HEALTH_STATUS_PATH", "/tmp/smartmeter-faker-health.json"))
+
+
+class HealthState:
+    def __init__(self, path: Path, version: str):
+        self.path = path
+        self.version = version
+        self.lock = threading.Lock()
+        self.last_success_at: Optional[float] = None
+        self.last_error: Optional[str] = None
+        self.status = "starting"
+
+    def mark_starting(self) -> None:
+        with self.lock:
+            self.status = "starting"
+            self.last_error = None
+            self._write_locked()
+
+    def mark_success(self) -> None:
+        with self.lock:
+            self.status = "healthy"
+            self.last_success_at = time.time()
+            self.last_error = None
+            self._write_locked()
+
+    def mark_error(self, error: str) -> None:
+        with self.lock:
+            self.status = "error"
+            self.last_error = error
+            self._write_locked()
+
+    def _write_locked(self) -> None:
+        payload = {
+            "status": self.status,
+            "version": self.version,
+            "last_success_at": self.last_success_at,
+            "last_error": self.last_error,
+            "updated_at": time.time(),
+        }
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(payload), encoding="utf-8")
 
 
 @dataclass(frozen=True)
@@ -377,6 +424,7 @@ def updater_loop(
     hr_block: LoggingBlock,
     ha: HomeAssistantClient,
     entities: HomeAssistantEntities,
+    health_state: HealthState,
     interval_s: float,
     frequency_hz: float,
     use_phase_sum_for_total_power: bool,
@@ -390,7 +438,9 @@ def updater_loop(
                 frequency_hz=frequency_hz,
                 use_phase_sum_for_total_power=use_phase_sum_for_total_power,
             )
+            health_state.mark_success()
         except Exception as exc:
+            health_state.mark_error(str(exc))
             LOG.exception("Updater failed: %s", exc)
         time.sleep(interval_s)
 
@@ -402,6 +452,11 @@ def updater_loop(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Home Assistant -> fake TQ EM420 Modbus TCP bridge for KEBA P30"
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {APP_VERSION}",
     )
     parser.add_argument("--host", default="0.0.0.0", help="Bind address")
     parser.add_argument("--port", type=int, default=5020, help="Modbus TCP port")
@@ -439,6 +494,11 @@ def main() -> None:
     )
     parser.add_argument("--log-reads", action="store_true", help="Log Modbus reads")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument(
+        "--health-path",
+        default=str(DEFAULT_HEALTH_PATH),
+        help="Path to the JSON health status file used by container health checks",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -462,6 +522,8 @@ def main() -> None:
         sys.exit(1)
 
     ha = HomeAssistantClient(base_url=ha_url, token=ha_token)
+    health_state = HealthState(Path(args.health_path), APP_VERSION)
+    health_state.mark_starting()
 
     hr_values = allocate_registers(2000)
     hr_block = LoggingBlock("HR", 0, hr_values, log_reads=args.log_reads)
@@ -474,6 +536,7 @@ def main() -> None:
             hr_block,
             ha,
             ha_config.entities,
+            health_state,
             args.poll_interval,
             args.grid_frequency,
             args.use_phase_sum_for_total_power,
@@ -492,7 +555,13 @@ def main() -> None:
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
-    LOG.info("Starting fake EM420 on %s:%s using HA at %s", args.host, args.port, ha_url)
+    LOG.info(
+        "Starting fake EM420 version=%s on %s:%s using HA at %s",
+        APP_VERSION,
+        args.host,
+        args.port,
+        ha_url,
+    )
     StartTcpServer(context=context, address=(args.host, args.port))
 
 
