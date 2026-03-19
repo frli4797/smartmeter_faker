@@ -12,12 +12,14 @@
 
 [`python-build.yml`](/Users/fredriklilja/Development/smartmeter_faker/.github/workflows/python-build.yml) installs the pinned dependencies from [`requirements.txt`](/Users/fredriklilja/Development/smartmeter_faker/requirements.txt) and verifies that `modbus_bridge.py` compiles on every push to `main` and on pull requests.
 
-[`docker-build.yml`](/Users/fredriklilja/Development/smartmeter_faker/.github/workflows/docker-build.yml) builds a multi-architecture Docker image for `linux/amd64`, `linux/arm64`, `linux/arm/v7`, and `linux/arm/v6`. On pushes to `main`, it publishes to `ghcr.io/<owner>/smartmeter-faker`. On `v*` tags, it publishes to Docker Hub as `<DOCKERHUB_USERNAME>/smartmeter-faker`. On pull requests, it only validates that the multi-arch build succeeds.
+[`docker-build.yml`](/Users/fredriklilja/Development/smartmeter_faker/.github/workflows/docker-build.yml) builds a multi-architecture Docker image for `linux/amd64`, `linux/arm64`, `linux/arm/v7`, and `linux/arm/v6`. On pushes to `main`, it publishes to `ghcr.io/<owner>/smartmeter-faker`. On `v*` tags, it publishes to Docker Hub as `<DOCKERHUB_USERNAME>/smartmeter-faker`. On pull requests, it only validates that the multi-arch build succeeds. Manual runs from the Actions tab can publish to GHCR, Docker Hub, or both by selecting the workflow inputs.
 
 Set these GitHub repository secrets for Docker Hub publishing:
 
 1. `DOCKERHUB_USERNAME`
 2. `DOCKERHUB_TOKEN`
+
+For a manual Docker Hub publish in GitHub Actions, open `Docker Build`, click `Run workflow`, set `publish_to_dockerhub` to `true`, and choose the `image_tag` you want to publish.
 
 ## Docker
 
