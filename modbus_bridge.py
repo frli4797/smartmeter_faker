@@ -331,18 +331,75 @@ class LoggingBlock(ModbusSequentialDataBlock):
         super().__init__(address, values)
         self.name = name
         self.log_reads = log_reads
+        self._default_value = 0
+
+    def _safe_count(self, count: Any) -> int:
+        if isinstance(count, int) and count > 0:
+            return count
+        return 1
+
+    def _log_access(self, access_type: str, address: Any, count: Any, **fields: Any) -> None:
+        log_event(
+            logging.INFO,
+            "Modbus server accessed",
+            event="modbus_access",
+            block=self.name,
+            access_type=access_type,
+            address=address,
+            count=count,
+            **fields,
+        )
 
     def getValues(self, address, count=1):
+        self._log_access("read", address, count)
+        try:
+            values = super().getValues(address, count)
+        except Exception as exc:
+            safe_count = self._safe_count(count)
+            log_event(
+                logging.ERROR,
+                "Modbus read could not be served",
+                event="modbus_request_error",
+                block=self.name,
+                access_type="read",
+                address=address,
+                count=count,
+                fallback_count=safe_count,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            return [self._default_value] * safe_count
+
         if self.log_reads:
             log_event(
                 logging.INFO,
-                "Modbus read",
+                "Modbus read completed",
                 event="modbus_read",
                 block=self.name,
                 address=address,
                 count=count,
+                returned_count=len(values),
             )
-        return super().getValues(address, count)
+        return values
+
+    def setValues(self, address, values):
+        count = len(values) if hasattr(values, "__len__") else None
+        self._log_access("write", address, count)
+        try:
+            return super().setValues(address, values)
+        except Exception as exc:
+            log_event(
+                logging.ERROR,
+                "Modbus write could not be applied",
+                event="modbus_request_error",
+                block=self.name,
+                access_type="write",
+                address=address,
+                count=count,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            return None
 
 
 # ----------------------------
@@ -794,6 +851,7 @@ def main() -> None:
         handlers=[handler],
         force=True,
     )
+    logging.getLogger("pymodbus").setLevel(logging.DEBUG if args.debug else logging.INFO)
 
     try:
         ha_config = load_homeassistant_config(Path(args.config))
@@ -889,13 +947,29 @@ def main() -> None:
         token_fingerprint=ha.token_fingerprint,
     )
     try:
-        StartTcpServer(context=context, address=(args.host, args.port))
-    except KeyboardInterrupt:
-        log_event(
-            logging.INFO,
-            "Modbus bridge shutdown requested",
-            event="server_stopping",
-        )
+        while not stop_event.is_set():
+            try:
+                StartTcpServer(context=context, address=(args.host, args.port))
+                break
+            except KeyboardInterrupt:
+                log_event(
+                    logging.INFO,
+                    "Modbus bridge shutdown requested",
+                    event="server_stopping",
+                )
+                break
+            except Exception as exc:
+                if stop_event.is_set():
+                    break
+                log_event(
+                    logging.ERROR,
+                    "Modbus server crashed unexpectedly; restarting",
+                    event="server_runtime_error",
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                    restart_delay_s=1.0,
+                )
+                stop_event.wait(1.0)
     finally:
         stop_event.set()
         health_state.mark_stopping()
