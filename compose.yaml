@@ -1,8 +1,6 @@
 services:
   smartmeter-faker:
-    image: smartmeter-faker:latest
-    build:
-      context: .
+    image: frli4797/smartmeter-modbus-bridge:latest
     env_file:
       - .env
     environment:
