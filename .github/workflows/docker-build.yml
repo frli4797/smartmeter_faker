@@ -73,6 +73,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.GHCR_IMAGE }}
+          flavor: |
+            latest=false
           tags: |
             type=ref,event=branch,enable=${{ github.event_name == 'push' }}
             type=sha,enable=${{ github.event_name == 'push' }}
@@ -88,6 +90,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.DOCKERHUB_IMAGE }}
+          flavor: |
+            latest=false
           tags: |
             type=ref,event=branch,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,enable=${{ github.ref == 'refs/heads/main' }}
