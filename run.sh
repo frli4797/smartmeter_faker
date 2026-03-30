@@ -32,7 +32,7 @@ HEALTHCHECK_MAX_AGE_SECONDS="$(bashio::config 'healthcheck_max_age_seconds')"
 
 declare -a args
 args=(
-    "python"
+    "python3"
     "/app/modbus_bridge.py"
     "--host"
     "0.0.0.0"
