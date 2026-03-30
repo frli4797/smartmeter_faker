@@ -1,0 +1,97 @@
+name: Update Changelog
+
+on:
+  release:
+    types:
+      - published
+
+jobs:
+  update-changelog:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Resolve release notes body
+        id: release-notes
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const release = context.payload.release;
+            const existingBody = (release.body || "").trim();
+            if (existingBody) {
+              core.setOutput("body", existingBody);
+              return;
+            }
+
+            const response = await github.rest.repos.generateReleaseNotes({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: release.tag_name,
+              target_commitish: release.target_commitish || context.payload.repository.default_branch,
+            });
+
+            core.setOutput("body", (response.data.body || "").trim());
+
+      - name: Update CHANGELOG.md
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          PUBLISHED_AT: ${{ github.event.release.published_at }}
+          RELEASE_BODY: ${{ steps.release-notes.outputs.body }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          changelog_path = Path("CHANGELOG.md")
+          marker = "<!-- changelog:release-entries -->"
+          tag_name = os.environ["TAG_NAME"].strip()
+          release_name = os.environ.get("RELEASE_NAME", "").strip()
+          published_at = os.environ["PUBLISHED_AT"][:10]
+          release_body = os.environ.get("RELEASE_BODY", "").strip()
+
+          heading = f"## [{tag_name}] - {published_at}"
+          if not changelog_path.exists():
+              raise SystemExit("CHANGELOG.md is missing")
+
+          original = changelog_path.read_text(encoding="utf-8")
+          if heading in original:
+              print(f"{tag_name} already present in CHANGELOG.md")
+              raise SystemExit(0)
+
+          title_line = ""
+          if release_name and release_name != tag_name:
+              title_line = f"_{release_name}_\n\n"
+
+          body = release_body or "- Release published."
+          entry = f"{heading}\n\n{title_line}{body}\n\n"
+
+          if marker not in original:
+              raise SystemExit("CHANGELOG marker not found")
+
+          updated = original.replace(marker, f"{marker}\n\n{entry}", 1)
+          changelog_path.write_text(updated, encoding="utf-8")
+          print(f"Inserted {tag_name} into CHANGELOG.md")
+          PY
+
+      - name: Commit and push changelog update
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          if git diff --quiet -- CHANGELOG.md; then
+            echo "No changelog changes to commit"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "docs: update changelog for ${TAG_NAME}"
+          git push
