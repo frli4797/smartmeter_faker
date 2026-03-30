@@ -48,7 +48,8 @@ jobs:
       - name: Log in to GitHub Container Registry
         if: |
           (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/v')) ||
-          (github.event_name == 'workflow_dispatch' && inputs.publish_to_ghcr)
+          (github.event_name == 'workflow_dispatch' && inputs.publish_to_ghcr) ||
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -59,7 +60,8 @@ jobs:
         if: |
           github.ref == 'refs/heads/main' ||
           startsWith(github.ref, 'refs/tags/v') ||
-          (github.event_name == 'workflow_dispatch' && inputs.publish_to_dockerhub)
+          (github.event_name == 'workflow_dispatch' && inputs.publish_to_dockerhub) ||
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -81,6 +83,17 @@ jobs:
             type=raw,value=edge,enable=${{ github.event_name == 'push' && github.ref_name == 'main' }}
             type=raw,value=${{ inputs.image_tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
 
+      - name: Extract PR GHCR Docker metadata
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        id: meta-ghcr-pr
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.GHCR_IMAGE }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=pr-${{ github.event.pull_request.number }}
+
       - name: Extract Docker Hub metadata
         if: |
           github.ref == 'refs/heads/main' ||
@@ -100,6 +113,17 @@ jobs:
             type=ref,event=tag,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=raw,value=${{ inputs.image_tag }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.publish_to_dockerhub }}
 
+      - name: Extract PR Docker Hub metadata
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        id: meta-dockerhub-pr
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKERHUB_IMAGE }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=pr-${{ github.event.pull_request.number }}
+
       - name: Build multi-arch Docker image for GHCR
         if: |
           (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/v')) ||
@@ -113,6 +137,20 @@ jobs:
           labels: ${{ steps.meta-ghcr.outputs.labels }}
           build-args: |
             BUILD_VERSION=${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || steps.meta-ghcr.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build multi-arch Docker image for GHCR on pull requests
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: docker/build-push-action@v6
+        with:
+          context: ./smartmeter_bridge
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6
+          push: true
+          tags: ${{ steps.meta-ghcr-pr.outputs.tags }}
+          labels: ${{ steps.meta-ghcr-pr.outputs.labels }}
+          build-args: |
+            BUILD_VERSION=pr-${{ github.event.pull_request.number }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -133,13 +171,28 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Validate multi-arch Docker build for pull requests
-        if: github.event_name == 'pull_request'
+      - name: Build multi-arch Docker image for Docker Hub on pull requests
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: docker/build-push-action@v6
+        with:
+          context: ./smartmeter_bridge
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6
+          push: true
+          tags: ${{ steps.meta-dockerhub-pr.outputs.tags }}
+          labels: ${{ steps.meta-dockerhub-pr.outputs.labels }}
+          build-args: |
+            BUILD_VERSION=pr-${{ github.event.pull_request.number }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Validate multi-arch Docker build for fork pull requests
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         uses: docker/build-push-action@v6
         with:
           context: ./smartmeter_bridge
           platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6
           push: false
+          tags: ${{ env.GHCR_IMAGE }}:pr-${{ github.event.pull_request.number }}
           build-args: |
             BUILD_VERSION=pr-${{ github.event.pull_request.number }}
           cache-from: type=gha
