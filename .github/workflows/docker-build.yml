@@ -39,12 +39,27 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set add-on version from tag
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Resolve build version
+        id: build-version
         run: |
-          version="${GITHUB_REF#refs/tags/v}"
-          echo "Setting add-on manifest version to $version"
-          perl -pi -e 's/^version:\s*"[^"]*"/version: "$ENV{version}"/' smartmeter_bridge/config.yaml
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF#refs/tags/v}"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            version="pr-${{ github.event.pull_request.number }}"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.image_tag }}"
+          else
+            version="dev"
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved build version: ${version}"
+
+      - name: Set add-on version in manifest
+        run: |
+          version="${{ steps.build-version.outputs.version }}"
+          echo "Setting add-on manifest version to ${version}"
+          perl -0pi -e 's/^version:\s*"[^"]*"/version: "'"${version}"'"/m' smartmeter_bridge/config.yaml
+          grep '^version:' smartmeter_bridge/config.yaml
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -139,7 +154,7 @@ jobs:
           tags: ${{ steps.meta-ghcr.outputs.tags }}
           labels: ${{ steps.meta-ghcr.outputs.labels }}
           build-args: |
-            BUILD_VERSION=${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || steps.meta-ghcr.outputs.version }}
+            BUILD_VERSION=${{ steps.build-version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -154,7 +169,7 @@ jobs:
           tags: ${{ steps.meta-ghcr-pr.outputs.tags }}
           labels: ${{ steps.meta-ghcr-pr.outputs.labels }}
           build-args: |
-            BUILD_VERSION=pr-${{ github.event.pull_request.number }}
+            BUILD_VERSION=${{ steps.build-version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -170,7 +185,7 @@ jobs:
           tags: ${{ steps.meta-dockerhub.outputs.tags }}
           labels: ${{ steps.meta-dockerhub.outputs.labels }}
           build-args: |
-            BUILD_VERSION=${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || steps.meta-dockerhub.outputs.version }}
+            BUILD_VERSION=${{ steps.build-version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -184,6 +199,6 @@ jobs:
           push: false
           tags: ${{ env.GHCR_IMAGE }}:pr-${{ github.event.pull_request.number }}
           build-args: |
-            BUILD_VERSION=pr-${{ github.event.pull_request.number }}
+            BUILD_VERSION=${{ steps.build-version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

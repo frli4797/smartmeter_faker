@@ -1,5 +1,5 @@
 name: "Smartmeter Bridge"
-version: "1.0.0"
+version: "dev"
 slug: smartmeter_bridge
 description: "Expose Home Assistant energy sensors as a fake Modbus TCP EM420 meter."
 url: "https://github.com/frli4797/smartmeter_bridge"
