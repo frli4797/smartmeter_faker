@@ -1,6 +1,6 @@
 # smartmeter_bridge
 
-[![Add to Home Assistant](https://my.home-assistant.io/badges/repository.svg?repository=https://github.com/frli4797/smartmeter_bridge)](https://my.home-assistant.io/redirect/add-source/?url=https://github.com/frli4797/smartmeter_bridge)
+[![Open your Home Assistant instance and show the add-on store with this repository URL pre-filled.](https://my.home-assistant.io/badges/supervisor_store.svg)](https://my.home-assistant.io/redirect/supervisor_store/?repository_url=https%3A%2F%2Fgithub.com%2Ffrli4797%2Fsmartmeter_bridge)
 
 This repository is now structured as a Home Assistant add-on repository. The add-on itself lives in [smartmeter_bridge](/Users/fredriklilja/Development/smartmeter_faker/smartmeter_bridge) and exposes Home Assistant sensor data as a fake Modbus TCP EM420-style meter.
 
