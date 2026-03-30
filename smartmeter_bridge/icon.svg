@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Smartmeter Bridge icon</title>
+  <desc id="desc">A stylized bridge connecting two nodes with electric signal accents.</desc>
+  <defs>
+    <linearGradient id="bg" x1="24" y1="24" x2="232" y2="232" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0f3d5e"/>
+      <stop offset="1" stop-color="#22a06b"/>
+    </linearGradient>
+    <linearGradient id="bridge" x1="52" y1="168" x2="204" y2="88" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f5fbff"/>
+      <stop offset="1" stop-color="#bfe9ff"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="12" y="12" width="232" height="232" rx="52" fill="url(#bg)"/>
+
+  <circle cx="56" cy="180" r="18" fill="#ffd166"/>
+  <circle cx="200" cy="180" r="18" fill="#ffd166"/>
+  <circle cx="56" cy="180" r="7" fill="#0f3d5e"/>
+  <circle cx="200" cy="180" r="7" fill="#0f3d5e"/>
+
+  <path
+    d="M56 180 H96 L128 94 L160 180 H200"
+    fill="none"
+    stroke="url(#bridge)"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="16"
+  />
+
+  <path
+    d="M84 180 C94 132 111 108 128 108 C145 108 162 132 172 180"
+    fill="none"
+    stroke="#7fd3ff"
+    stroke-linecap="round"
+    stroke-width="10"
+    opacity="0.95"
+  />
+
+  <path
+    d="M104 72 L118 86 L108 86 L122 104"
+    fill="none"
+    stroke="#ffd166"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="8"
+  />
+
+  <path
+    d="M148 72 L162 86 L152 86 L166 104"
+    fill="none"
+    stroke="#ffd166"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="8"
+  />
+
+  <rect x="92" y="172" width="72" height="16" rx="8" fill="#e7f7ff"/>
+</svg>
