@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import logging
@@ -331,31 +332,88 @@ def allocate_registers(size: int = 2000) -> list[int]:
 # ----------------------------
 
 class LoggingBlock(ModbusSequentialDataBlock):
-    def __init__(self, name: str, address: int, values: list[int], log_reads: bool = False):
+    def __init__(
+        self,
+        name: str,
+        address: int,
+        values: list[int],
+        log_reads: bool = False,
+        access_log_interval_s: float = 30.0,
+    ):
         super().__init__(address, values)
         self.name = name
         self.log_reads = log_reads
         self._default_value = 0
+        self._internal_write_depth = 0
+        self._access_log_interval_s = access_log_interval_s
+        self._access_stats: dict[str, dict[str, Any]] = {}
 
     def _safe_count(self, count: Any) -> int:
         if isinstance(count, int) and count > 0:
             return count
         return 1
 
-    def _log_access(self, access_type: str, address: Any, count: Any, **fields: Any) -> None:
+    @contextmanager
+    def internal_update(self):
+        self._internal_write_depth += 1
+        try:
+            yield
+        finally:
+            self._internal_write_depth -= 1
+
+    def _log_internal_write(self, address: Any, count: Any, **fields: Any) -> None:
         log_event(
-            logging.INFO,
-            "Modbus server accessed",
-            event="modbus_access",
+            logging.DEBUG,
+            "Internal Modbus registers updated",
+            event="modbus_internal_update",
             block=self.name,
-            access_type=access_type,
+            access_type="write",
             address=address,
             count=count,
             **fields,
         )
 
+    def _log_external_access(self, access_type: str, address: Any, count: Any, **fields: Any) -> None:
+        now = time.time()
+        safe_count = self._safe_count(count)
+        stats = self._access_stats.setdefault(
+            access_type,
+            {
+                "since": now,
+                "last_log_at": 0.0,
+                "access_count": 0,
+                "register_count": 0,
+            },
+        )
+        stats["access_count"] += 1
+        stats["register_count"] += safe_count
+        stats["last_address"] = address
+        stats["last_count"] = count
+        stats["last_fields"] = fields
+
+        if now - float(stats["last_log_at"]) < self._access_log_interval_s:
+            return
+
+        log_event(
+            logging.INFO,
+            "External Modbus access summary",
+            event="modbus_access_summary",
+            block=self.name,
+            access_type=access_type,
+            access_count=stats["access_count"],
+            register_count=stats["register_count"],
+            first_seen_at=stats["since"],
+            last_address=stats["last_address"],
+            last_count=stats["last_count"],
+            **stats["last_fields"],
+        )
+        stats["since"] = now
+        stats["last_log_at"] = now
+        stats["access_count"] = 0
+        stats["register_count"] = 0
+
     def getValues(self, address: int, count: int = 1) -> list[int]:  # pylint: disable=invalid-name
-        self._log_access("read", address, count)
+        self._log_external_access("read", address, count)
         try:
             values = super().getValues(address, count)
         except Exception as exc:
@@ -375,7 +433,7 @@ class LoggingBlock(ModbusSequentialDataBlock):
             return [self._default_value] * safe_count
         if self.log_reads:
             log_event(
-                logging.INFO,
+                logging.DEBUG,
                 "Modbus read completed",
                 event="modbus_read",
                 block=self.name,
@@ -387,7 +445,10 @@ class LoggingBlock(ModbusSequentialDataBlock):
 
     def setValues(self, address, values):
         count = len(values) if hasattr(values, "__len__") else None
-        self._log_access("write", address, count)
+        if self._internal_write_depth > 0:
+            self._log_internal_write(address, count)
+        else:
+            self._log_external_access("write", address, count)
         try:
             return super().setValues(address, values)
         except Exception as exc:
@@ -535,34 +596,35 @@ class PollReporter:
 # ----------------------------
 
 def initialize_em420_defaults(hr_block: LoggingBlock, frequency_hz: float = 50.0) -> None:
-    # Total
-    set_u32_block(hr_block, 0, 0)                         # total active power import, 0.1 W
-    set_i32_block(hr_block, 24, 1000)                    # total PF, 0.001
-    set_u32_block(hr_block, 26, int(round(frequency_hz * 1000)))  # frequency, 0.001 Hz
+    with hr_block.internal_update():
+        # Total
+        set_u32_block(hr_block, 0, 0)                         # total active power import, 0.1 W
+        set_i32_block(hr_block, 24, 1000)                    # total PF, 0.001
+        set_u32_block(hr_block, 26, int(round(frequency_hz * 1000)))  # frequency, 0.001 Hz
 
-    # L1
-    set_u32_block(hr_block, 40, 0)                       # active power import, 0.1 W
-    set_u32_block(hr_block, 60, 0)                       # current, 0.001 A
-    set_u32_block(hr_block, 62, 230000)                  # voltage, 0.001 V
-    set_i32_block(hr_block, 64, 1000)                    # PF, 0.001
+        # L1
+        set_u32_block(hr_block, 40, 0)                       # active power import, 0.1 W
+        set_u32_block(hr_block, 60, 0)                       # current, 0.001 A
+        set_u32_block(hr_block, 62, 230000)                  # voltage, 0.001 V
+        set_i32_block(hr_block, 64, 1000)                    # PF, 0.001
 
-    # L2
-    set_u32_block(hr_block, 80, 0)
-    set_u32_block(hr_block, 100, 0)
-    set_u32_block(hr_block, 102, 230000)
-    set_i32_block(hr_block, 104, 1000)
+        # L2
+        set_u32_block(hr_block, 80, 0)
+        set_u32_block(hr_block, 100, 0)
+        set_u32_block(hr_block, 102, 230000)
+        set_i32_block(hr_block, 104, 1000)
 
-    # L3
-    set_u32_block(hr_block, 120, 0)
-    set_u32_block(hr_block, 140, 0)
-    set_u32_block(hr_block, 142, 230000)
-    set_i32_block(hr_block, 144, 1000)
+        # L3
+        set_u32_block(hr_block, 120, 0)
+        set_u32_block(hr_block, 140, 0)
+        set_u32_block(hr_block, 142, 230000)
+        set_i32_block(hr_block, 144, 1000)
 
-    # Energy counters, 0.1 Wh
-    set_u64_block(hr_block, 512, 0)
-    set_u64_block(hr_block, 592, 0)
-    set_u64_block(hr_block, 672, 0)
-    set_u64_block(hr_block, 752, 0)
+        # Energy counters, 0.1 Wh
+        set_u64_block(hr_block, 512, 0)
+        set_u64_block(hr_block, 592, 0)
+        set_u64_block(hr_block, 672, 0)
+        set_u64_block(hr_block, 752, 0)
 
 
 def normalize_pf(raw_pf: float) -> float:
@@ -658,34 +720,35 @@ def update_em420_registers_from_ha(
     # PF: 0.001
     # energy: 0.1 Wh
 
-    # Total
-    set_u32_block(hr_block, 0, int(round(max(0.0, total_power_w) * 10)))
-    set_i32_block(hr_block, 24, int(round(total_pf * 1000)))
-    set_u32_block(hr_block, 26, int(round(frequency_hz * 1000)))
+    with hr_block.internal_update():
+        # Total
+        set_u32_block(hr_block, 0, int(round(max(0.0, total_power_w) * 10)))
+        set_i32_block(hr_block, 24, int(round(total_pf * 1000)))
+        set_u32_block(hr_block, 26, int(round(frequency_hz * 1000)))
 
-    # L1
-    set_u32_block(hr_block, 40, int(round(l1_power_w * 10)))
-    set_u32_block(hr_block, 60, int(round(l1_a * 1000)))
-    set_u32_block(hr_block, 62, int(round(l1_v * 1000)))
-    set_i32_block(hr_block, 64, int(round(l1_pf * 1000)))
+        # L1
+        set_u32_block(hr_block, 40, int(round(l1_power_w * 10)))
+        set_u32_block(hr_block, 60, int(round(l1_a * 1000)))
+        set_u32_block(hr_block, 62, int(round(l1_v * 1000)))
+        set_i32_block(hr_block, 64, int(round(l1_pf * 1000)))
 
-    # L2
-    set_u32_block(hr_block, 80, int(round(l2_power_w * 10)))
-    set_u32_block(hr_block, 100, int(round(l2_a * 1000)))
-    set_u32_block(hr_block, 102, int(round(l2_v * 1000)))
-    set_i32_block(hr_block, 104, int(round(l2_pf * 1000)))
+        # L2
+        set_u32_block(hr_block, 80, int(round(l2_power_w * 10)))
+        set_u32_block(hr_block, 100, int(round(l2_a * 1000)))
+        set_u32_block(hr_block, 102, int(round(l2_v * 1000)))
+        set_i32_block(hr_block, 104, int(round(l2_pf * 1000)))
 
-    # L3
-    set_u32_block(hr_block, 120, int(round(l3_power_w * 10)))
-    set_u32_block(hr_block, 140, int(round(l3_a * 1000)))
-    set_u32_block(hr_block, 142, int(round(l3_v * 1000)))
-    set_i32_block(hr_block, 144, int(round(l3_pf * 1000)))
+        # L3
+        set_u32_block(hr_block, 120, int(round(l3_power_w * 10)))
+        set_u32_block(hr_block, 140, int(round(l3_a * 1000)))
+        set_u32_block(hr_block, 142, int(round(l3_v * 1000)))
+        set_i32_block(hr_block, 144, int(round(l3_pf * 1000)))
 
-    # Energy
-    set_u64_block(hr_block, 512, int(round(total_import_wh * 10)))
-    set_u64_block(hr_block, 592, int(round(l1_import_wh * 10)))
-    set_u64_block(hr_block, 672, int(round(l2_import_wh * 10)))
-    set_u64_block(hr_block, 752, int(round(l3_import_wh * 10)))
+        # Energy
+        set_u64_block(hr_block, 512, int(round(total_import_wh * 10)))
+        set_u64_block(hr_block, 592, int(round(l1_import_wh * 10)))
+        set_u64_block(hr_block, 672, int(round(l2_import_wh * 10)))
+        set_u64_block(hr_block, 752, int(round(l3_import_wh * 10)))
 
     reporter.log_success(
         total_power_w=round(total_power_w, 3),

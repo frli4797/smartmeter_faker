@@ -21,7 +21,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r smartmeter_bridge/requirements.txt
 
       - name: Verify application compiles
-        run: python -m py_compile modbus_bridge.py healthcheck.py
+        run: python -m py_compile smartmeter_bridge/modbus_bridge.py smartmeter_bridge/healthcheck.py

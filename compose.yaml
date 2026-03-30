@@ -18,8 +18,8 @@ services:
       HA_ENTITY_L3_A: ${HA_ENTITY_L3_A}
       HEALTHCHECK_MAX_AGE_SECONDS: ${HEALTHCHECK_MAX_AGE_SECONDS:-30}
     command:
-      - python
-      - modbus_bridge.py
+      - python3
+      - /app/modbus_bridge.py
       - --host
       - ${MODBUS_HOST:-0.0.0.0}
       - --port

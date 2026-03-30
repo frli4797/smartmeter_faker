@@ -1,0 +1,51 @@
+name: "Smartmeter Bridge"
+version: "dev"
+slug: smartmeter_bridge
+description: "Expose Home Assistant energy sensors as a fake Modbus TCP EM420 meter."
+url: "https://github.com/frli4797/smartmeter_bridge"
+init: false
+startup: services
+boot: auto
+homeassistant_api: true
+arch:
+  - amd64
+  - aarch64
+  - armv7
+  - armhf
+  - i386
+ports:
+  5020/tcp: 5020
+ports_description:
+  5020/tcp: "Modbus TCP endpoint"
+options:
+  poll_interval: 2
+  grid_frequency: 50
+  use_phase_sum_for_total_power: false
+  log_reads: false
+  debug: false
+  healthcheck_max_age_seconds: 30
+  total_power_w: "sensor.power_hem"
+  total_pf: "sensor.tibber_effektfaktor"
+  total_import_kwh: "sensor.last_meter_consumption_hem"
+  l1_v: "sensor.tibber_spanning_fas1"
+  l2_v: "sensor.tibber_spanning_fas2"
+  l3_v: "sensor.tibber_spanning_fas3"
+  l1_a: "sensor.tibber_strom_fas1"
+  l2_a: "sensor.tibber_strom_fas2"
+  l3_a: "sensor.tibber_strom_fas3"
+schema:
+  poll_interval: "float"
+  grid_frequency: "float"
+  use_phase_sum_for_total_power: "bool"
+  log_reads: "bool"
+  debug: "bool"
+  healthcheck_max_age_seconds: "int"
+  total_power_w: "str"
+  total_pf: "str"
+  total_import_kwh: "str"
+  l1_v: "str"
+  l2_v: "str"
+  l3_v: "str"
+  l1_a: "str"
+  l2_a: "str"
+  l3_a: "str"
