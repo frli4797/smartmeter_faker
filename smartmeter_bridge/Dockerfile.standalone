@@ -1,0 +1,24 @@
+FROM python:3.12-alpine
+
+WORKDIR /app
+
+ARG BUILD_VERSION=dev
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV APP_VERSION=${BUILD_VERSION}
+ENV HEALTH_STATUS_PATH=/tmp/smartmeter-faker-health.json
+ENV HEALTHCHECK_MAX_AGE_SECONDS=30
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY modbus_bridge.py ./
+COPY healthcheck.py ./
+
+EXPOSE 5020
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["python3", "healthcheck.py"]
+
+CMD ["python3", "modbus_bridge.py"]

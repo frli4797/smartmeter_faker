@@ -131,6 +131,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./smartmeter_bridge
+          file: ./smartmeter_bridge/Dockerfile.standalone
           platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6
           push: true
           tags: ${{ steps.meta-ghcr.outputs.tags }}
@@ -145,6 +146,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./smartmeter_bridge
+          file: ./smartmeter_bridge/Dockerfile.standalone
           platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6
           push: true
           tags: ${{ steps.meta-ghcr-pr.outputs.tags }}
@@ -162,6 +164,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./smartmeter_bridge
+          file: ./smartmeter_bridge/Dockerfile.standalone
           platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6
           push: true
           tags: ${{ steps.meta-dockerhub.outputs.tags }}
@@ -176,6 +179,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./smartmeter_bridge
+          file: ./smartmeter_bridge/Dockerfile.standalone
           platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6
           push: true
           tags: ${{ steps.meta-dockerhub-pr.outputs.tags }}
@@ -190,6 +194,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./smartmeter_bridge
+          file: ./smartmeter_bridge/Dockerfile.standalone
           platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6
           push: false
           tags: ${{ env.GHCR_IMAGE }}:pr-${{ github.event.pull_request.number }}

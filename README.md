@@ -16,7 +16,9 @@ Environment variables take precedence over YAML. `HA_TOKEN_FILE` is also support
 
 [`python-build.yml`](/Users/fredriklilja/Development/smartmeter_faker/.github/workflows/python-build.yml) installs the pinned dependencies from [`requirements.txt`](/Users/fredriklilja/Development/smartmeter_faker/smartmeter_bridge/requirements.txt) and verifies that [`modbus_bridge.py`](/Users/fredriklilja/Development/smartmeter_faker/smartmeter_bridge/modbus_bridge.py) compiles on every push to `main` and on pull requests.
 
-[`docker-build.yml`](/Users/fredriklilja/Development/smartmeter_faker/.github/workflows/docker-build.yml) builds a multi-architecture Docker image for `linux/amd64`, `linux/arm64`, `linux/arm/v7`, and `linux/arm/v6`. On pushes to `main`, including merged pull requests, it publishes to both `ghcr.io/<owner>/smartmeter-modbus-bridge` and Docker Hub as `<DOCKERHUB_USERNAME>/smartmeter-modbus-bridge` with the `edge` tag. On `v*` tags, it publishes release images with the `latest` tag. On pull requests, it only validates that the multi-arch build succeeds. Manual runs from the Actions tab can publish to GHCR, Docker Hub, or both by selecting the workflow inputs.
+[`docker-build.yml`](/Users/fredriklilja/Development/smartmeter_faker/.github/workflows/docker-build.yml) builds a multi-architecture Docker image for `linux/amd64`, `linux/arm64`, `linux/arm/v7`, and `linux/arm/v6`. On pushes to `main`, including merged pull requests, it publishes to both `ghcr.io/<owner>/smartmeter-modbus-bridge` and Docker Hub as `<DOCKERHUB_USERNAME>/smartmeter-modbus-bridge` with the `edge` tag. On `v*` tags, it publishes release images with the `latest` tag. On same-repository pull requests, it also publishes `pr-<number>` images to both registries. Manual runs from the Actions tab can publish to GHCR, Docker Hub, or both by selecting the workflow inputs.
+
+GitHub Actions intentionally uses [Dockerfile.standalone](/Users/fredriklilja/Development/smartmeter_faker/smartmeter_bridge/Dockerfile.standalone) instead of the add-on [Dockerfile](/Users/fredriklilja/Development/smartmeter_faker/smartmeter_bridge/Dockerfile). The add-on Dockerfile depends on Home Assistant's `BUILD_FROM` mechanism, which is provided by the Supervisor/add-on builder, while the standalone Dockerfile is a regular multi-arch container build for GHCR and Docker Hub.
 
 Set these GitHub repository secrets for Docker Hub publishing:
 
@@ -33,9 +35,11 @@ The add-on manifest is in [config.yaml](/Users/fredriklilja/Development/smartmet
 
 ## Docker
 
-Build the standalone container locally with `docker build -t smartmeter-modbus-bridge ./smartmeter_bridge`.
+Build the standalone container locally with `docker build -f smartmeter_bridge/Dockerfile.standalone -t smartmeter-modbus-bridge ./smartmeter_bridge`.
 
 The image includes a Docker `HEALTHCHECK` that reports unhealthy if the bridge has not completed a successful Home Assistant refresh within the configured age window. The application also logs its version on startup, and `python3 smartmeter_bridge/modbus_bridge.py --version` prints the current version string.
+
+Use [Dockerfile](/Users/fredriklilja/Development/smartmeter_faker/smartmeter_bridge/Dockerfile) only for Home Assistant add-on builds. Use [Dockerfile.standalone](/Users/fredriklilja/Development/smartmeter_faker/smartmeter_bridge/Dockerfile.standalone) for local Docker builds and registry publishing.
 
 Runtime logs are emitted as JSON and include structured events for Home Assistant poll success/failure, Modbus reads, and server lifecycle. Home Assistant polling now uses exponential backoff after failures, capped by `--max-backoff`.
 
