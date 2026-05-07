@@ -221,10 +221,17 @@ def _read_secret_from_file(path_value: Optional[str]) -> Optional[str]:
         raise ValueError(f"Failed reading secret file {secret_path}: {exc}") from exc
 
 
-def _validate_token(token: Optional[str]) -> Optional[str]:
-    if token is None:
+def _normalize_optional_config_value(value: Optional[str]) -> Optional[str]:
+    if value is None:
         return None
-    normalized = token.strip()
+    normalized = value.strip()
+    if not normalized or normalized.lower() in {"null", "none"}:
+        return None
+    return normalized
+
+
+def _validate_token(token: Optional[str]) -> Optional[str]:
+    normalized = _normalize_optional_config_value(token)
     if not normalized:
         return None
     if normalized == "YOUR_LONG_LIVED_ACCESS_TOKEN":
@@ -239,7 +246,7 @@ def load_homeassistant_config(path: Path) -> HomeAssistantConfig:
     else:
         LOG.info("No YAML config found at %s, relying on environment configuration", path)
 
-    env_url = os.getenv("HA_URL")
+    env_url = _normalize_optional_config_value(os.getenv("HA_URL"))
     env_token_raw = os.getenv("HA_TOKEN") or _read_secret_from_file(
         os.getenv("HA_TOKEN_FILE")
     )
@@ -249,7 +256,10 @@ def load_homeassistant_config(path: Path) -> HomeAssistantConfig:
         "yes",
         "on",
     }
-    env_entities = {key: os.getenv(env_var) for key, env_var in ENTITY_ENV_VARS.items()}
+    env_entities = {
+        key: _normalize_optional_config_value(os.getenv(env_var))
+        for key, env_var in ENTITY_ENV_VARS.items()
+    }
     used_env = bool(env_url or env_token_raw or any(env_entities.values()))
 
     url = env_url or (yaml_config.url if yaml_config else None)

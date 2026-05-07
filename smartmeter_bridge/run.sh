@@ -8,10 +8,22 @@ HA_URL="${HA_URL:-http://supervisor/core}"
 export HA_TOKEN
 HA_TOKEN="${HA_TOKEN:-${SUPERVISOR_TOKEN:-}}"
 
+normalize_optional_config_value() {
+    local value="${1:-}"
+    case "${value}" in
+        ""|"null"|"None"|"none")
+            printf ''
+            ;;
+        *)
+            printf '%s' "${value}"
+            ;;
+    esac
+}
+
 export HA_ENTITY_TOTAL_POWER_W
 HA_ENTITY_TOTAL_POWER_W="$(bashio::config 'total_power_w')"
 export HA_ENTITY_TOTAL_PF
-HA_ENTITY_TOTAL_PF="$(bashio::config 'total_pf' || true)"
+HA_ENTITY_TOTAL_PF="$(normalize_optional_config_value "$(bashio::config 'total_pf' || true)")"
 export HA_ENTITY_TOTAL_IMPORT_KWH
 HA_ENTITY_TOTAL_IMPORT_KWH="$(bashio::config 'total_import_kwh')"
 export HA_ENTITY_L1_V

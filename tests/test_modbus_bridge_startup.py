@@ -195,6 +195,46 @@ class PowerFactorCalculationTests(unittest.TestCase):
 
         self.assertIsNone(loaded.entities.total_pf)
 
+    def test_load_homeassistant_config_treats_null_total_pf_as_missing_when_calculation_enabled(self) -> None:
+        config = {
+            "HA_URL": "http://homeassistant.local:8123",
+            "HA_TOKEN": "token",
+            "CALCULATE_POWER_FACTOR": "true",
+            "HA_ENTITY_TOTAL_POWER_W": "sensor.total_power_w",
+            "HA_ENTITY_TOTAL_PF": "null",
+            "HA_ENTITY_TOTAL_IMPORT_KWH": "sensor.total_import_kwh",
+            "HA_ENTITY_L1_V": "sensor.l1_v",
+            "HA_ENTITY_L2_V": "sensor.l2_v",
+            "HA_ENTITY_L3_V": "sensor.l3_v",
+            "HA_ENTITY_L1_A": "sensor.l1_a",
+            "HA_ENTITY_L2_A": "sensor.l2_a",
+            "HA_ENTITY_L3_A": "sensor.l3_a",
+        }
+
+        with mock.patch.dict(modbus_bridge.os.environ, config, clear=True):
+            loaded = modbus_bridge.load_homeassistant_config(Path("missing.yaml"))
+
+        self.assertIsNone(loaded.entities.total_pf)
+
+    def test_load_homeassistant_config_rejects_null_total_pf_when_total_pf_is_required(self) -> None:
+        config = {
+            "HA_URL": "http://homeassistant.local:8123",
+            "HA_TOKEN": "token",
+            "HA_ENTITY_TOTAL_POWER_W": "sensor.total_power_w",
+            "HA_ENTITY_TOTAL_PF": "null",
+            "HA_ENTITY_TOTAL_IMPORT_KWH": "sensor.total_import_kwh",
+            "HA_ENTITY_L1_V": "sensor.l1_v",
+            "HA_ENTITY_L2_V": "sensor.l2_v",
+            "HA_ENTITY_L3_V": "sensor.l3_v",
+            "HA_ENTITY_L1_A": "sensor.l1_a",
+            "HA_ENTITY_L2_A": "sensor.l2_a",
+            "HA_ENTITY_L3_A": "sensor.l3_a",
+        }
+
+        with mock.patch.dict(modbus_bridge.os.environ, config, clear=True):
+            with self.assertRaisesRegex(ValueError, "total_pf"):
+                modbus_bridge.load_homeassistant_config(Path("missing.yaml"))
+
 
 class HomeAssistantRegisterUpdateTests(unittest.TestCase):
     def make_client(self, states: dict[str, object]) -> modbus_bridge.HomeAssistantClient:
