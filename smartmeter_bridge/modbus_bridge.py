@@ -104,7 +104,7 @@ class HealthState:
 @dataclass(frozen=True)
 class HomeAssistantEntities:
     total_power_w: str
-    total_pf: str
+    total_pf: Optional[str]
     total_import_kwh: str
     l1_v: str
     l2_v: str
@@ -140,7 +140,6 @@ class HomeAssistantEntityError(HomeAssistantError):
 
 REQUIRED_ENTITY_KEYS = (
     "total_power_w",
-    "total_pf",
     "total_import_kwh",
     "l1_v",
     "l2_v",
@@ -202,7 +201,11 @@ def load_homeassistant_config_from_yaml(path: Path) -> HomeAssistantConfig:
         url=url,
         token=token,
         entities=HomeAssistantEntities(
-            **{key: entities[key] for key in REQUIRED_ENTITY_KEYS}
+            **{
+                key: entities[key]
+                for key in REQUIRED_ENTITY_KEYS
+            },
+            total_pf=entities.get("total_pf") if isinstance(entities.get("total_pf"), str) else None,
         ),
         source=f"yaml:{path}",
     )
@@ -240,6 +243,12 @@ def load_homeassistant_config(path: Path) -> HomeAssistantConfig:
     env_token_raw = os.getenv("HA_TOKEN") or _read_secret_from_file(
         os.getenv("HA_TOKEN_FILE")
     )
+    calculate_power_factor = os.getenv("CALCULATE_POWER_FACTOR", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     env_entities = {key: os.getenv(env_var) for key, env_var in ENTITY_ENV_VARS.items()}
     used_env = bool(env_url or env_token_raw or any(env_entities.values()))
 
@@ -262,8 +271,12 @@ def load_homeassistant_config(path: Path) -> HomeAssistantConfig:
     missing.extend(
         f"{env_var} or homeassistant.entities.{key}"
         for key, env_var in ENTITY_ENV_VARS.items()
-        if not entity_values.get(key)
+        if key != "total_pf" and not entity_values.get(key)
     )
+    if not calculate_power_factor and not entity_values.get("total_pf"):
+        missing.append(
+            f"{ENTITY_ENV_VARS['total_pf']} or homeassistant.entities.total_pf"
+        )
     if missing:
         raise ValueError(
             "Incomplete Home Assistant configuration. Missing: "
@@ -657,6 +670,22 @@ def distribute_total_energy_wh(
     )
 
 
+def calculate_three_phase_power_factor(
+    total_power_w: float,
+    l1_v: float,
+    l2_v: float,
+    l3_v: float,
+    l1_a: float,
+    l2_a: float,
+    l3_a: float,
+) -> float:
+    apparent_power_va = max(
+        (l1_v * l1_a) + (l2_v * l2_a) + (l3_v * l3_a),
+        0.1,
+    )
+    return clamp(total_power_w / apparent_power_va, -1.0, 1.0)
+
+
 def update_em420_registers_from_ha(
     hr_block: LoggingBlock,
     ha: HomeAssistantClient,
@@ -664,9 +693,9 @@ def update_em420_registers_from_ha(
     reporter: PollReporter,
     frequency_hz: float = 50.0,
     use_phase_sum_for_total_power: bool = False,
+    calculate_power_factor: bool = False,
 ) -> None:
     total_power_w = ha.get_float(entities.total_power_w, 0.0) or 0.0
-    total_pf_raw = ha.get_float(entities.total_pf, 1.0) or 1.0
     total_import_kwh = ha.get_float(entities.total_import_kwh, 0.0) or 0.0
 
     l1_v = ha.get_float(entities.l1_v, 230.0) or 230.0
@@ -677,23 +706,44 @@ def update_em420_registers_from_ha(
     l2_a = ha.get_float(entities.l2_a, 0.0) or 0.0
     l3_a = ha.get_float(entities.l3_a, 0.0) or 0.0
 
-    total_pf = normalize_pf(total_pf_raw)
+    if calculate_power_factor:
+        estimated_total_from_phases = max(
+            (l1_v * l1_a) + (l2_v * l2_a) + (l3_v * l3_a),
+            0.0,
+        )
+        if use_phase_sum_for_total_power:
+            total_power_w = estimated_total_from_phases
+        total_pf = calculate_three_phase_power_factor(
+            total_power_w=total_power_w,
+            l1_v=l1_v,
+            l2_v=l2_v,
+            l3_v=l3_v,
+            l1_a=l1_a,
+            l2_a=l2_a,
+            l3_a=l3_a,
+        )
+        l1_power_w = max(0.0, l1_v * l1_a * total_pf)
+        l2_power_w = max(0.0, l2_v * l2_a * total_pf)
+        l3_power_w = max(0.0, l3_v * l3_a * total_pf)
+    else:
+        total_pf_raw = ha.get_float(entities.total_pf, 1.0) or 1.0
+        total_pf = normalize_pf(total_pf_raw)
 
-    # Estimate per-phase active power from V * I * PF
-    l1_power_w = max(0.0, l1_v * l1_a * total_pf)
-    l2_power_w = max(0.0, l2_v * l2_a * total_pf)
-    l3_power_w = max(0.0, l3_v * l3_a * total_pf)
+        # Estimate per-phase active power from V * I * PF
+        l1_power_w = max(0.0, l1_v * l1_a * total_pf)
+        l2_power_w = max(0.0, l2_v * l2_a * total_pf)
+        l3_power_w = max(0.0, l3_v * l3_a * total_pf)
 
-    estimated_total_from_phases = l1_power_w + l2_power_w + l3_power_w
+        estimated_total_from_phases = l1_power_w + l2_power_w + l3_power_w
 
-    if use_phase_sum_for_total_power:
-        total_power_w = estimated_total_from_phases
-    elif total_power_w > 0.0 and estimated_total_from_phases > 1.0:
-        # Scale the phase powers to match the HA total if it is available.
-        scale = total_power_w / estimated_total_from_phases
-        l1_power_w *= scale
-        l2_power_w *= scale
-        l3_power_w *= scale
+        if use_phase_sum_for_total_power:
+            total_power_w = estimated_total_from_phases
+        elif total_power_w > 0.0 and estimated_total_from_phases > 1.0:
+            # Scale the phase powers to match the HA total if it is available.
+            scale = total_power_w / estimated_total_from_phases
+            l1_power_w *= scale
+            l2_power_w *= scale
+            l3_power_w *= scale
 
     def phase_pf(p_w: float, v: float, a: float, fallback: float) -> float:
         apparent = v * a
@@ -799,6 +849,12 @@ def updater_loop(
                 reporter=reporter,
                 frequency_hz=frequency_hz,
                 use_phase_sum_for_total_power=use_phase_sum_for_total_power,
+                calculate_power_factor=os.getenv("CALCULATE_POWER_FACTOR", "").strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                },
             )
             if consecutive_failures:
                 log_event(

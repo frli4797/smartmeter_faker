@@ -21,11 +21,11 @@ options:
   poll_interval: 2
   grid_frequency: 50
   use_phase_sum_for_total_power: false
+  calculate_power_factor: false
   log_reads: false
   debug: false
   healthcheck_max_age_seconds: 30
   total_power_w: "sensor.power_hem"
-  total_pf: "sensor.tibber_effektfaktor"
   total_import_kwh: "sensor.last_meter_consumption_hem"
   l1_v: "sensor.tibber_spanning_fas1"
   l2_v: "sensor.tibber_spanning_fas2"
@@ -37,11 +37,12 @@ schema:
   poll_interval: "float"
   grid_frequency: "float"
   use_phase_sum_for_total_power: "bool"
+  calculate_power_factor: "bool"
   log_reads: "bool"
   debug: "bool"
   healthcheck_max_age_seconds: "int"
   total_power_w: "str"
-  total_pf: "str"
+  total_pf: "str?"
   total_import_kwh: "str"
   l1_v: "str"
   l2_v: "str"

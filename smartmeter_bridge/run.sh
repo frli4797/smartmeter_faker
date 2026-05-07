@@ -11,7 +11,7 @@ HA_TOKEN="${HA_TOKEN:-${SUPERVISOR_TOKEN:-}}"
 export HA_ENTITY_TOTAL_POWER_W
 HA_ENTITY_TOTAL_POWER_W="$(bashio::config 'total_power_w')"
 export HA_ENTITY_TOTAL_PF
-HA_ENTITY_TOTAL_PF="$(bashio::config 'total_pf')"
+HA_ENTITY_TOTAL_PF="$(bashio::config 'total_pf' || true)"
 export HA_ENTITY_TOTAL_IMPORT_KWH
 HA_ENTITY_TOTAL_IMPORT_KWH="$(bashio::config 'total_import_kwh')"
 export HA_ENTITY_L1_V
@@ -29,6 +29,13 @@ HA_ENTITY_L3_A="$(bashio::config 'l3_a')"
 
 export HEALTHCHECK_MAX_AGE_SECONDS
 HEALTHCHECK_MAX_AGE_SECONDS="$(bashio::config 'healthcheck_max_age_seconds')"
+
+export CALCULATE_POWER_FACTOR
+if bashio::config.true 'calculate_power_factor'; then
+    CALCULATE_POWER_FACTOR="true"
+else
+    CALCULATE_POWER_FACTOR="false"
+fi
 
 declare -a args
 args=(

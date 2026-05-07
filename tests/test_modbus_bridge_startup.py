@@ -161,5 +161,40 @@ class MainStartupTests(unittest.TestCase):
         client.close.assert_called_once()
 
 
+class PowerFactorCalculationTests(unittest.TestCase):
+    def test_calculate_three_phase_power_factor(self) -> None:
+        power_factor = modbus_bridge.calculate_three_phase_power_factor(
+            total_power_w=9000.0,
+            l1_v=230.0,
+            l2_v=230.0,
+            l3_v=230.0,
+            l1_a=14.0,
+            l2_a=14.0,
+            l3_a=14.0,
+        )
+
+        self.assertAlmostEqual(power_factor, 0.9316770186, places=6)
+
+    def test_load_homeassistant_config_allows_missing_total_pf_when_calculation_enabled(self) -> None:
+        config = {
+            "HA_URL": "http://homeassistant.local:8123",
+            "HA_TOKEN": "token",
+            "CALCULATE_POWER_FACTOR": "true",
+            "HA_ENTITY_TOTAL_POWER_W": "sensor.total_power_w",
+            "HA_ENTITY_TOTAL_IMPORT_KWH": "sensor.total_import_kwh",
+            "HA_ENTITY_L1_V": "sensor.l1_v",
+            "HA_ENTITY_L2_V": "sensor.l2_v",
+            "HA_ENTITY_L3_V": "sensor.l3_v",
+            "HA_ENTITY_L1_A": "sensor.l1_a",
+            "HA_ENTITY_L2_A": "sensor.l2_a",
+            "HA_ENTITY_L3_A": "sensor.l3_a",
+        }
+
+        with mock.patch.dict(modbus_bridge.os.environ, config, clear=True):
+            loaded = modbus_bridge.load_homeassistant_config(Path("missing.yaml"))
+
+        self.assertIsNone(loaded.entities.total_pf)
+
+
 if __name__ == "__main__":
     unittest.main()

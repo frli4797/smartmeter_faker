@@ -32,7 +32,6 @@ Add this repository URL in Home Assistant's add-on store, then install the `Smar
 Set the entity IDs for your Home Assistant sensors:
 
 - `total_power_w`
-- `total_pf`
 - `total_import_kwh`
 - `l1_v`
 - `l2_v`
@@ -46,9 +45,14 @@ Optional settings:
 - `poll_interval`: Seconds between polls.
 - `grid_frequency`: Usually `50` or `60`.
 - `use_phase_sum_for_total_power`: Derive total power from phase values instead of using the total power entity.
+- `calculate_power_factor`: Calculate the total power factor from total power and per-phase voltage/current values instead of reading `total_pf` from Home Assistant.
 - `log_reads`: Log Modbus reads.
 - `debug`: Enable debug logging.
 - `healthcheck_max_age_seconds`: Maximum age of the last successful poll before the container is considered unhealthy.
+
+If `calculate_power_factor` is disabled, configure `total_pf` as a Home Assistant entity ID. If it is enabled, `total_pf` can be left empty.
+
+Home Assistant add-on configuration does not support conditionally hiding options in the add-on UI, so the `total_pf` field will still be visible even when `calculate_power_factor` is enabled.
 
 ## Connecting your client
 
