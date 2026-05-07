@@ -196,5 +196,71 @@ class PowerFactorCalculationTests(unittest.TestCase):
         self.assertIsNone(loaded.entities.total_pf)
 
 
+class HomeAssistantRegisterUpdateTests(unittest.TestCase):
+    def make_client(self, states: dict[str, object]) -> modbus_bridge.HomeAssistantClient:
+        client = modbus_bridge.HomeAssistantClient("http://homeassistant.local:8123", "token")
+
+        def get_state(entity_id: str) -> dict[str, object]:
+            return {"state": states[entity_id]}
+
+        client.get_state = get_state
+        return client
+
+    def make_block(self) -> modbus_bridge.LoggingBlock:
+        block = modbus_bridge.LoggingBlock(
+            "HR",
+            0,
+            modbus_bridge.allocate_registers(2000),
+        )
+        modbus_bridge.initialize_em420_defaults(block)
+        return block
+
+    def make_states(self, **overrides: object) -> dict[str, object]:
+        states: dict[str, object] = {
+            "sensor.total_power_w": "0",
+            "sensor.total_pf": "1",
+            "sensor.total_import_kwh": "123.45",
+            "sensor.l1_v": "230",
+            "sensor.l2_v": "230",
+            "sensor.l3_v": "230",
+            "sensor.l1_a": "0",
+            "sensor.l2_a": "0",
+            "sensor.l3_a": "0",
+        }
+        states.update(overrides)
+        return states
+
+    def test_zero_values_are_valid_and_enable_modbus_reads(self) -> None:
+        block = self.make_block()
+        client = self.make_client(self.make_states())
+
+        modbus_bridge.update_em420_registers_from_ha(
+            hr_block=block,
+            ha=client,
+            entities=make_config().entities,
+            reporter=modbus_bridge.PollReporter(),
+        )
+
+        self.assertEqual(block.getValues(modbus_bridge.idx(0), 2), [0, 0])
+        self.assertEqual(block.getValues(modbus_bridge.idx(60), 2), [0, 0])
+
+    def test_unavailable_required_values_disable_modbus_reads(self) -> None:
+        block = self.make_block()
+        client = self.make_client(
+            self.make_states(**{"sensor.total_power_w": "unavailable"})
+        )
+
+        with self.assertRaises(modbus_bridge.HomeAssistantEntityError):
+            modbus_bridge.update_em420_registers_from_ha(
+                hr_block=block,
+                ha=client,
+                entities=make_config().entities,
+                reporter=modbus_bridge.PollReporter(),
+            )
+
+        with self.assertRaises(ValueError):
+            block.getValues(modbus_bridge.idx(0), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -727,68 +727,73 @@ def update_em420_registers_from_ha(
     use_phase_sum_for_total_power: bool = False,
     calculate_power_factor: bool = False,
 ) -> None:
-    total_power_w = ha.get_float(entities.total_power_w, 0.0) or 0.0
-    total_import_kwh = ha.get_float(entities.total_import_kwh, 0.0) or 0.0
+    try:
+        total_power_w = ha.get_required_float(entities.total_power_w)
+        total_import_kwh = ha.get_required_float(entities.total_import_kwh)
 
-    l1_v = ha.get_float(entities.l1_v, 230.0) or 230.0
-    l2_v = ha.get_float(entities.l2_v, 230.0) or 230.0
-    l3_v = ha.get_float(entities.l3_v, 230.0) or 230.0
+        l1_v = ha.get_required_float(entities.l1_v)
+        l2_v = ha.get_required_float(entities.l2_v)
+        l3_v = ha.get_required_float(entities.l3_v)
 
-    l1_a = ha.get_float(entities.l1_a, 0.0) or 0.0
-    l2_a = ha.get_float(entities.l2_a, 0.0) or 0.0
-    l3_a = ha.get_float(entities.l3_a, 0.0) or 0.0
+        l1_a = ha.get_required_float(entities.l1_a)
+        l2_a = ha.get_required_float(entities.l2_a)
+        l3_a = ha.get_required_float(entities.l3_a)
 
-    if calculate_power_factor:
-        total_pf = calculate_three_phase_power_factor(
-            total_power_w=total_power_w,
-            l1_v=l1_v,
-            l2_v=l2_v,
-            l3_v=l3_v,
-            l1_a=l1_a,
-            l2_a=l2_a,
-            l3_a=l3_a,
+        if calculate_power_factor:
+            total_pf = calculate_three_phase_power_factor(
+                total_power_w=total_power_w,
+                l1_v=l1_v,
+                l2_v=l2_v,
+                l3_v=l3_v,
+                l1_a=l1_a,
+                l2_a=l2_a,
+                l3_a=l3_a,
+            )
+            # Estimate per-phase active power from V * I * PF.
+            l1_power_w = max(0.0, l1_v * l1_a * total_pf)
+            l2_power_w = max(0.0, l2_v * l2_a * total_pf)
+            l3_power_w = max(0.0, l3_v * l3_a * total_pf)
+        else:
+            if entities.total_pf is None:
+                raise HomeAssistantEntityError("Home Assistant total_pf entity is not configured")
+            total_pf = normalize_pf(ha.get_required_float(entities.total_pf))
+
+            # Estimate per-phase active power from V * I * PF
+            l1_power_w = max(0.0, l1_v * l1_a * total_pf)
+            l2_power_w = max(0.0, l2_v * l2_a * total_pf)
+            l3_power_w = max(0.0, l3_v * l3_a * total_pf)
+
+            estimated_total_from_phases = l1_power_w + l2_power_w + l3_power_w
+
+            if use_phase_sum_for_total_power:
+                total_power_w = estimated_total_from_phases
+            elif total_power_w > 0.0 and estimated_total_from_phases > 1.0:
+                # Scale the phase powers to match the HA total if it is available.
+                scale = total_power_w / estimated_total_from_phases
+                l1_power_w *= scale
+                l2_power_w *= scale
+                l3_power_w *= scale
+
+        def phase_pf(p_w: float, v: float, a: float, fallback: float) -> float:
+            apparent = v * a
+            if apparent <= 0.1:
+                return fallback
+            return clamp(p_w / apparent, -1.0, 1.0)
+
+        l1_pf = phase_pf(l1_power_w, l1_v, l1_a, total_pf)
+        l2_pf = phase_pf(l2_power_w, l2_v, l2_a, total_pf)
+        l3_pf = phase_pf(l3_power_w, l3_v, l3_a, total_pf)
+
+        total_import_wh = max(0.0, total_import_kwh * 1000.0)
+        l1_import_wh, l2_import_wh, l3_import_wh = distribute_total_energy_wh(
+            total_import_wh,
+            max(l1_power_w, 0.001),
+            max(l2_power_w, 0.001),
+            max(l3_power_w, 0.001),
         )
-        # Estimate per-phase active power from V * I * PF.
-        l1_power_w = max(0.0, l1_v * l1_a * total_pf)
-        l2_power_w = max(0.0, l2_v * l2_a * total_pf)
-        l3_power_w = max(0.0, l3_v * l3_a * total_pf)
-    else:
-        total_pf_raw = ha.get_float(entities.total_pf, 1.0) or 1.0
-        total_pf = normalize_pf(total_pf_raw)
-
-        # Estimate per-phase active power from V * I * PF
-        l1_power_w = max(0.0, l1_v * l1_a * total_pf)
-        l2_power_w = max(0.0, l2_v * l2_a * total_pf)
-        l3_power_w = max(0.0, l3_v * l3_a * total_pf)
-
-        estimated_total_from_phases = l1_power_w + l2_power_w + l3_power_w
-
-        if use_phase_sum_for_total_power:
-            total_power_w = estimated_total_from_phases
-        elif total_power_w > 0.0 and estimated_total_from_phases > 1.0:
-            # Scale the phase powers to match the HA total if it is available.
-            scale = total_power_w / estimated_total_from_phases
-            l1_power_w *= scale
-            l2_power_w *= scale
-            l3_power_w *= scale
-
-    def phase_pf(p_w: float, v: float, a: float, fallback: float) -> float:
-        apparent = v * a
-        if apparent <= 0.1:
-            return fallback
-        return clamp(p_w / apparent, -1.0, 1.0)
-
-    l1_pf = phase_pf(l1_power_w, l1_v, l1_a, total_pf)
-    l2_pf = phase_pf(l2_power_w, l2_v, l2_a, total_pf)
-    l3_pf = phase_pf(l3_power_w, l3_v, l3_a, total_pf)
-
-    total_import_wh = max(0.0, total_import_kwh * 1000.0)
-    l1_import_wh, l2_import_wh, l3_import_wh = distribute_total_energy_wh(
-        total_import_wh,
-        max(l1_power_w, 0.001),
-        max(l2_power_w, 0.001),
-        max(l3_power_w, 0.001),
-    )
+    except Exception as exc:
+        hr_block.set_serving_enabled(False, str(exc))
+        raise
 
     # EM420 register scaling:
     # power: 0.1 W
@@ -826,6 +831,8 @@ def update_em420_registers_from_ha(
         set_u64_block(hr_block, 592, int(round(l1_import_wh * 10)))
         set_u64_block(hr_block, 672, int(round(l2_import_wh * 10)))
         set_u64_block(hr_block, 752, int(round(l3_import_wh * 10)))
+
+    hr_block.set_serving_enabled(True)
 
     reporter.log_success(
         total_power_w=round(total_power_w, 3),
